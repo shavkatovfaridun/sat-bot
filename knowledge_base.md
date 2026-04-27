@@ -51,11 +51,12 @@ If a lead asks about school/business partnerships OR specifically requests to sp
 
 ## TEACHING TEAM
 
-- Up to **4 years** of SAT teaching experience
+- Up to **5 years** of SAT teaching experience
 - All mentors are real SAT takers with real scores
 - **Our top mentor's scores** (marketing benchmark):
   - **SAT Math: 800/800**
   - **SAT English: 730/800**
+  - **Top mentor's overall best: 1530**
 - Students taught by our mentors have scored up to **1510**
 - We match mentors to student level — different mentors for different needs, all with verified SAT scores
 
