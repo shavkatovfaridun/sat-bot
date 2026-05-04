@@ -1,21 +1,18 @@
 """
 SAT SAMARKAND — TELEGRAM BOT (Web Service for Render free tier)
 ================================================================
-Uses Google Gemini API (free tier).
+Uses Anthropic Claude Haiku 4.5 API.
 
 To run on Render:
   1. Set Start Command: python telegram_bot_web.py
   2. Required env vars:
        TELEGRAM_BOT_TOKEN
-       GEMINI_API_KEY
+       ANTHROPIC_API_KEY
        FARIDUN_CHAT_ID
        GOOGLE_SHEET_ID
        GOOGLE_CREDS_JSON
   3. Optional env vars:
-       GEMINI_MODEL (defaults to "gemini-2.0-flash")
        PORT (defaults to 10000)
-
-Get a Gemini API key (free): https://aistudio.google.com → Get API key
 """
 
 import os
@@ -28,7 +25,7 @@ from pathlib import Path
 from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-import google.generativeai as genai
+from anthropic import Anthropic
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -36,15 +33,11 @@ from google.oauth2.service_account import Credentials
 # CONFIG
 # ----------------------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-GEMINI_API_KEY     = os.environ["GEMINI_API_KEY"]
+ANTHROPIC_API_KEY  = os.environ["ANTHROPIC_API_KEY"]
 FARIDUN_CHAT_ID    = int(os.environ["FARIDUN_CHAT_ID"])
 GOOGLE_SHEET_ID    = os.environ["GOOGLE_SHEET_ID"]
 GOOGLE_CREDS_JSON  = os.environ["GOOGLE_CREDS_JSON"]
 PORT               = int(os.environ.get("PORT", 10000))
-
-# Model: gemini-2.0-flash is fast, free, multilingual, decent at instructions.
-# Alternatives: gemini-1.5-flash, gemini-2.5-flash. Override via env var.
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 # ----------------------------------------------------------------------------
 # SETUP
@@ -52,33 +45,19 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger("sat-bot")
 
-# Configure Gemini SDK
-genai.configure(api_key=GEMINI_API_KEY)
+anthropic = Anthropic(api_key=ANTHROPIC_API_KEY)
 
-# Load system prompt + knowledge base from same files we used with Claude
 BASE = Path(__file__).parent
 SYSTEM_PROMPT = (BASE / "system_prompt.md").read_text(encoding="utf-8")
 KNOWLEDGE_BASE = (BASE / "knowledge_base.md").read_text(encoding="utf-8")
 FULL_SYSTEM = f"{SYSTEM_PROMPT}\n\n---\n\n# KNOWLEDGE BASE\n\n{KNOWLEDGE_BASE}"
 
-# Build Gemini model with system instruction baked in
-gemini_model = genai.GenerativeModel(
-    model_name=GEMINI_MODEL,
-    system_instruction=FULL_SYSTEM,
-    generation_config={
-        "temperature": 0.7,
-        "max_output_tokens": 1024,
-    },
-)
-
-# Google Sheets
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), scopes=SCOPES)
 gc = gspread.authorize(creds)
 sheet = gc.open_by_key(GOOGLE_SHEET_ID).sheet1
 
-# Per-user conversation history (resets on Render restart — no Redis yet).
-# Format: dict[user_id, list[{role: 'user'|'model', parts: [text]}]]
+# Per-user conversation history (resets on Render restart)
 conversations: dict[int, list[dict]] = {}
 
 # ----------------------------------------------------------------------------
@@ -89,7 +68,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def health():
-    return f"SAT Samarkand bot running 🟢  ({GEMINI_MODEL})", 200
+    return "SAT Samarkand bot running 🟢", 200
 
 
 @app.route("/ping")
@@ -109,41 +88,25 @@ def log_to_sheet(row: list) -> None:
 
 async def notify_faridun(context: ContextTypes.DEFAULT_TYPE, lead_info: str) -> None:
     try:
-        await context.bot.send_message(
-            chat_id=FARIDUN_CHAT_ID,
-            text=f"🔥 HOT LEAD 🔥\n\n{lead_info}",
-        )
+        await context.bot.send_message(chat_id=FARIDUN_CHAT_ID, text=f"🔥 HOT LEAD 🔥\n\n{lead_info}")
     except Exception as e:
         log.error(f"Faridun notify failed: {e}")
 
 
-def ask_ai(user_id: int, user_message: str) -> tuple[str, bool]:
-    """
-    Send conversation to Gemini. Returns (reply_text, is_hot_lead).
-
-    Gemini uses 'user' and 'model' roles (Anthropic used 'user' and 'assistant').
-    """
+def ask_claude(user_id: int, user_message: str) -> tuple[str, bool]:
     history = conversations.setdefault(user_id, [])
-
-    # Trim to last 20 turns to control token usage
+    history.append({"role": "user", "content": user_message})
     trimmed = history[-20:]
 
-    # Start a chat session with prior history
-    chat = gemini_model.start_chat(history=trimmed)
+    response = anthropic.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1024,
+        system=FULL_SYSTEM,
+        messages=trimmed,
+    )
+    reply = response.content[0].text
+    history.append({"role": "assistant", "content": reply})
 
-    # Send new message and get response
-    response = chat.send_message(user_message)
-    reply = (response.text or "").strip()
-
-    if not reply:
-        # Gemini occasionally returns empty under safety filters; signal a fallback
-        raise ValueError("Empty reply from Gemini")
-
-    # Append both turns to memory
-    history.append({"role": "user", "parts": [user_message]})
-    history.append({"role": "model", "parts": [reply]})
-
-    # Detect hot lead escalation tag
     is_hot = "[ESCALATE_HOT_LEAD]" in reply
     reply = reply.replace("[ESCALATE_HOT_LEAD]", "").strip()
     return reply, is_hot
@@ -179,9 +142,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     try:
-        reply, is_hot = ask_ai(user.id, text)
+        reply, is_hot = ask_claude(user.id, text)
     except Exception as e:
-        log.error(f"AI error: {e}")
+        log.error(f"Claude error: {e}")
         reply = (
             "Kechirasiz, texnik muammo bor. Iltimos, bir oz kutib qayta yozing 🙏\n"
             "Yoki to'g'ridan-to'g'ri @sat_samarkand kanaliga murojaat qiling."
@@ -216,18 +179,17 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ----------------------------------------------------------------------------
-# RUN BOT IN A BACKGROUND THREAD + FLASK ON MAIN
+# RUN BOT IN BACKGROUND THREAD + FLASK ON MAIN
 # ----------------------------------------------------------------------------
 def run_telegram_bot():
     bot_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CommandHandler("reset", reset))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    log.info(f"SAT Samarkand bot polling... ({GEMINI_MODEL})")
+    log.info("SAT Samarkand bot polling...")
     bot_app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
 
 
-# Start the Telegram bot in a background thread when Flask app starts
 threading.Thread(target=run_telegram_bot, daemon=True).start()
 
 
