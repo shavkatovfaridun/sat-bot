@@ -127,7 +127,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     welcome = (
         "Assalomu alaykum! 👋\n"
         "Здравствуйте! / Hello!\n\n"
-        "Men Xusnida, SAT Samarkand'ning yordamchisiman. "
+        "Men Sora, SAT Samarkand'ning yordamchisiman. "
         "SAT kurslarimiz, narxlar, jadval yoki boshqa har qanday savol bo'yicha yordam bera olaman. "
         "O'zingizga qulay tilda yozing — o'zbek, rus yoki ingliz! 😊"
     )

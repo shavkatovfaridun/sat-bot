@@ -1,7 +1,7 @@
 """
 SAT SAMARKAND — INSTAGRAM DM BOT (Web Service for Render free tier)
 ====================================================================
-Receives Instagram DMs via Meta Graph API webhook, replies as Xusnida using
+Receives Instagram DMs via Meta Graph API webhook, replies as Sora using
 Claude, logs everything to the same Google Sheet as the Telegram bot, and
 pings Faridun on Telegram for hot leads.
 
