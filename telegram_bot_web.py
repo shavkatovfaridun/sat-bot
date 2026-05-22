@@ -53,9 +53,13 @@ KNOWLEDGE_BASE = (BASE / "knowledge_base.md").read_text(encoding="utf-8")
 FULL_SYSTEM = f"{SYSTEM_PROMPT}\n\n---\n\n# KNOWLEDGE BASE\n\n{KNOWLEDGE_BASE}"
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), scopes=SCOPES)
-gc = gspread.authorize(creds)
-sheet = gc.open_by_key(GOOGLE_SHEET_ID).sheet1
+try:
+    creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), scopes=SCOPES)
+    gc = gspread.authorize(creds)
+    sheet = gc.open_by_key(GOOGLE_SHEET_ID).sheet1
+except Exception as e:
+    log.error(f"Google Sheets init failed: {e}")
+    sheet = None
 
 # Per-user conversation history (resets on Render restart)
 conversations: dict[int, list[dict]] = {}
@@ -80,6 +84,8 @@ def ping():
 # BOT HELPERS
 # ----------------------------------------------------------------------------
 def log_to_sheet(row: list) -> None:
+    if sheet is None:
+        return
     try:
         sheet.append_row(row, value_input_option="USER_ENTERED")
     except Exception as e:
@@ -190,8 +196,6 @@ def run_telegram_bot():
     bot_app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
 
 
-threading.Thread(target=run_telegram_bot, daemon=True).start()
-
-
 if __name__ == "__main__":
+    threading.Thread(target=run_telegram_bot, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT)

@@ -67,8 +67,12 @@ KNOWLEDGE_BASE = (BASE / "knowledge_base.md").read_text(encoding="utf-8")
 FULL_SYSTEM = f"{SYSTEM_PROMPT}\n\n---\n\n# KNOWLEDGE BASE\n\n{KNOWLEDGE_BASE}"
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), scopes=SCOPES)
-sheet = gspread.authorize(creds).open_by_key(GOOGLE_SHEET_ID).sheet1
+try:
+    creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDS_JSON), scopes=SCOPES)
+    sheet = gspread.authorize(creds).open_by_key(GOOGLE_SHEET_ID).sheet1
+except Exception as e:
+    log.error(f"Google Sheets init failed: {e}")
+    sheet = None
 
 # Per-IG-user conversation history (resets on Render restart)
 conversations: dict[str, list[dict]] = {}
@@ -81,14 +85,14 @@ def verify_signature(payload: bytes, signature_header: str) -> bool:
     if not signature_header:
         return False
     expected = "sha256=" + hmac.new(
-        META_APP_SECRET.encode(), payload, hashlib.sha256
+        META_APP_SECRET.encode(), payload, digestmod=hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature_header)
 
 
 def send_instagram_message(recipient_id: str, text: str) -> None:
     """Send a DM via Instagram Graph API."""
-    url = f"https://graph.facebook.com/v21.0/me/messages?access_token={META_PAGE_ACCESS_TOKEN}"
+    url = f"https://graph.facebook.com/v22.0/me/messages?access_token={META_PAGE_ACCESS_TOKEN}"
     payload = {
         "recipient": {"id": recipient_id},
         "message": {"text": text},
@@ -112,6 +116,8 @@ def notify_faridun_via_telegram(message: str) -> None:
 
 
 def log_to_sheet(row: list) -> None:
+    if sheet is None:
+        return
     try:
         sheet.append_row(row, value_input_option="USER_ENTERED")
     except Exception as e:
